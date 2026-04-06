@@ -1,0 +1,9 @@
+<launch>
+
+<node pkg="2025_comp_controller"
+	type="main.py"
+	name="main" 
+	output="screen">
+</node>
+
+</launch>

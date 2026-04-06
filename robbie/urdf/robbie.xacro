@@ -1,0 +1,632 @@
+<?xml version='1.0'?>
+
+<robot name="robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="camera_width" value="0.02"/>
+  <xacro:property name="camera_length" value="0.02"/>
+  <xacro:property name="camera_height" value="0.01"/>
+  <xacro:property name="camera_mass" value="0.01"/>
+  <xacro:property name="chassis_width" value="0.15"/>
+  <xacro:property name="chassis_length" value="0.2"/>
+  <xacro:property name="chassis_height" value="0.05"/>
+  <xacro:property name="chassis_mass" value="0.5"/>
+  <xacro:property name="wheel_radius" value="0.04"/>
+  <xacro:property name="wheel_width" value="0.03"/>
+  <xacro:property name="wheel_mass" value="0.025"/>
+
+  <!-- NEW -->
+
+  <xacro:property name="enable_front_left_camera" value="true"/>
+  <xacro:property name="enable_front_right_camera" value="true"/>
+
+  <xacro:property name="front_camera_yaw_deg" value="20"/>
+  <xacro:property name="front_camera_yaw" value="${front_camera_yaw_deg * 3.14159265359 / 180.0}"/>
+
+  <xacro:property name="range_sensor_size" value="0.015"/>
+  <xacro:property name="range_sensor_mass" value="0.01"/>
+
+  <xacro:property name="enable_front_ranges" value="true"/>
+
+  <xacro:property name="front_range_size" value="0.015"/>
+  <xacro:property name="front_range_mass" value="0.01"/>
+
+  <xacro:property name="front_range_x" value="${chassis_length/2 + front_range_size/2}"/>
+  <xacro:property name="front_range_z" value="0.02"/>
+
+  <!-- left/right positions -->
+  <xacro:property name="front_range_left_y" value="${chassis_width/2 - 0.015}"/>
+  <xacro:property name="front_range_center_y" value="0.0"/>
+  <xacro:property name="front_range_right_y" value="-${chassis_width/2 - 0.015}"/>
+
+  <!-- yaw angles in degrees -->
+  <xacro:property name="front_range_left_yaw_deg" value="90"/>
+  <xacro:property name="front_range_center_yaw_deg" value="0"/>
+  <xacro:property name="front_range_right_yaw_deg" value="-90"/>
+
+  <xacro:property name="front_range_left_yaw" value="${front_range_left_yaw_deg * 3.14159265359 / 180.0}"/>
+  <xacro:property name="front_range_center_yaw" value="${front_range_center_yaw_deg * 3.14159265359 / 180.0}"/>
+  <xacro:property name="front_range_right_yaw" value="${front_range_right_yaw_deg * 3.14159265359 / 180.0}"/>
+
+  <xacro:property name="front_range_min" value="0.02"/>
+  <xacro:property name="front_range_max" value="5.0"/>
+  <xacro:property name="front_range_resolution" value="0.01"/>
+
+  <xacro:property name="enable_top_camera" value="true"/>
+  <xacro:property name="top_camera_height_from_bottom" value="0.5"/>
+  <xacro:property name="top_camera_z" value="${-chassis_height/2 + top_camera_height_from_bottom}"/>
+  <xacro:property name="top_camera_fov" value="1.57"/>
+
+  <!-- ORIGINAL -->
+
+  <xacro:include filename="$(find robbie)/urdf/macros.xacro"/>
+  <xacro:include filename="$(find robbie)/urdf/materials.xacro"/>
+
+  <link name='chassis'>
+    <xacro:box_inertial name="chassis" m="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}"/>
+    <collision name='chassis_collision'>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+    <visual name='chassis_visual'>
+      <origin xyz="0 0 0" rpy=" 0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="Cyan">
+        <color rgba="0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <link name='wheel_FR'>
+    <xacro:cylinder_inertial name="wheel_FR" m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <collision name='wheel_FR_collision'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>    
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+    <visual name='wheel_FR_visual'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name='wheel_FL'>
+    <xacro:cylinder_inertial name="wheel_FL" m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <collision name='wheel_FL_collision'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>    
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+    <visual name='wheel_FL_visual'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name='wheel_RR'>
+    <xacro:cylinder_inertial name="wheel_RR" m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <collision name='wheel_RR_collision'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>    
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+    <visual name='wheel_RR_visual'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name='wheel_RL'>
+    <xacro:cylinder_inertial name="wheel_RL" m="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <collision name='wheel_RL_collision'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>    
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+    <visual name='wheel_RL_visual'>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <link name='camera_link'>
+    <xacro:box_inertial name="camera_link" m="${camera_mass}" x="${camera_width}" y="${camera_length}" z="${camera_height}"/>
+    <collision name='camera_link_collision'>
+      <geometry>
+        <box size="${camera_length} ${camera_width} ${camera_height}"/>
+      </geometry>
+    </collision>
+    <visual name='camera_link_visual'>
+      <origin xyz="0 0 0" rpy=" 0 0 0"/>
+      <geometry>
+        <box size="${camera_length} ${camera_width} ${camera_height}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="wheel_FR_joint" type="continuous">
+    <parent link="chassis"/>
+    <child link="wheel_FR"/>
+    <origin xyz="${chassis_length/2-wheel_radius} -${chassis_width/2+wheel_width/2} 0"
+            rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="wheel_FL_joint" type="continuous">
+    <parent link="chassis"/>
+    <child link="wheel_FL"/>
+    <origin xyz="${chassis_length/2-wheel_radius} ${chassis_width/2+wheel_width/2} 0"
+            rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="wheel_RR_joint" type="continuous">
+    <parent link="chassis"/>
+    <child link="wheel_RR"/>
+    <origin xyz="-${chassis_length/2-wheel_radius} -${chassis_width/2+wheel_width/2} 0"
+            rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="wheel_RL_joint" type="continuous">
+    <parent link="chassis"/>
+    <child link="wheel_RL"/>
+    <origin xyz="-${chassis_length/2-wheel_radius} ${chassis_width/2+wheel_width/2} 0"
+            rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="camera_link"/>
+    <origin xyz="${chassis_length/2} 0 ${chassis_height/2+camera_height/2}"/>
+  </joint>
+
+  <gazebo reference="chassis">
+    <material>Gazebo/Orange</material>
+  </gazebo>
+
+  <gazebo reference="camera_link">
+    <material>Gazebo/Green</material>
+  </gazebo>
+
+  <gazebo reference="wheel_FL">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+
+  <gazebo reference="wheel_FR">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+
+  <gazebo reference="wheel_RL">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+
+  <gazebo reference="wheel_RR">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+
+  <gazebo>
+    <!-- <plugin name="skid_steer_drive_controller" filename="libgazebo_ros_skid_steer_drive.so">
+      <updateRate>100.0</updateRate>
+      <leftFrontJoint>wheel_FL_joint</leftFrontJoint>
+      <rightFrontJoint>wheel_FR_joint</rightFrontJoint>
+      <leftRearJoint>wheel_RL_joint</leftRearJoint>
+      <rightRearJoint>wheel_RR_joint</rightRearJoint>
+      <wheelSeparation>0.4</wheelSeparation>
+      <wheelDiameter>0.215</wheelDiameter>
+      <robotBaseFrame>base_link</robotBaseFrame>
+      <torque>20</torque>
+      <topicName>cmd_vel</topicName>
+      <broadcastTF>false</broadcastTF>
+    </plugin> -->
+    <plugin name="planar_move_controller" filename="libgazebo_ros_planar_move.so">
+      <commandTopic>cmd_vel</commandTopic>
+      <odometryTopic>odom</odometryTopic>
+      <odometryFrame>odom</odometryFrame>
+      <robotBaseFrame>chassis</robotBaseFrame>
+      <odometryRate>20.0</odometryRate>
+    </plugin>
+  </gazebo>
+
+
+
+  <gazebo reference="camera_link">
+    <sensor type="camera" name="camera1">
+      <update_rate>30.0</update_rate>
+      <camera name="head">
+        <horizontal_fov>1.3962634</horizontal_fov>
+        <image>
+          <width>1600</width>
+          <height>1600</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.02</near>
+          <far>300</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <!-- Noise is sampled independently per pixel on each frame.
+              That pixel's noise value is added to each of its color
+              channels, which at that point lie in the range [0,1]. -->
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <alwaysOn>true</alwaysOn>
+        <updateRate>0.0</updateRate>
+        <cameraName>rrbot/camera1</cameraName>
+        <imageTopicName>image_raw</imageTopicName>
+        <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+        <frameName>camera_link</frameName>
+        <hackBaseline>0.07</hackBaseline>
+        <distortionK1>0.0</distortionK1>
+        <distortionK2>0.0</distortionK2>
+        <distortionK3>0.0</distortionK3>
+        <distortionT1>0.0</distortionT1>
+        <distortionT2>0.0</distortionT2>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- CAMERAS -->
+
+  <xacro:if value="${enable_front_left_camera}">
+    <link name='camera_fl_link'>
+      <xacro:box_inertial name="camera_fl_link" m="${camera_mass}" x="${camera_width}" y="${camera_length}" z="${camera_height}"/>
+      <collision name='camera_fl_link_collision'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </collision>
+      <visual name='camera_fl_link_visual'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="camera_fl_joint" type="fixed">
+      <parent link="chassis"/>
+      <child link="camera_fl_link"/>
+      <origin xyz="${chassis_length/2} ${chassis_width/2 - 0.02} ${chassis_height/2 + camera_height/2}"
+              rpy="0 0 ${front_camera_yaw}"/>
+    </joint>
+
+    <gazebo reference="camera_fl_link">
+      <material>Gazebo/Green</material>
+    </gazebo>
+
+    <gazebo reference="camera_fl_link">
+      <sensor type="camera" name="camera_fl_sensor">
+        <update_rate>30.0</update_rate>
+        <camera name="camera_fl">
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>1600</width>
+            <height>1600</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>300</far>
+          </clip>
+        </camera>
+        <plugin name="camera_fl_controller" filename="libgazebo_ros_camera.so">
+          <alwaysOn>true</alwaysOn>
+          <updateRate>0.0</updateRate>
+          <cameraName>robot/camera_fl</cameraName>
+          <imageTopicName>image_raw</imageTopicName>
+          <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+          <frameName>camera_fl_link</frameName>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <xacro:if value="${enable_front_right_camera}">
+    <link name='camera_fr_link'>
+      <xacro:box_inertial name="camera_fr_link" m="${camera_mass}" x="${camera_width}" y="${camera_length}" z="${camera_height}"/>
+      <collision name='camera_fr_link_collision'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </collision>
+      <visual name='camera_fr_link_visual'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="camera_fr_joint" type="fixed">
+      <parent link="chassis"/>
+      <child link="camera_fr_link"/>
+      <origin xyz="${chassis_length/2} -${chassis_width/2 - 0.02} ${chassis_height/2 + camera_height/2}"
+              rpy="0 0 -${front_camera_yaw}"/>
+    </joint>
+
+    <gazebo reference="camera_fr_link">
+      <material>Gazebo/Green</material>
+    </gazebo>
+
+    <gazebo reference="camera_fr_link">
+      <sensor type="camera" name="camera_fr_sensor">
+        <update_rate>30.0</update_rate>
+        <camera name="camera_fr">
+          <horizontal_fov>1.3962634</horizontal_fov>
+          <image>
+            <width>1600</width>
+            <height>1600</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>300</far>
+          </clip>
+        </camera>
+        <plugin name="camera_fr_controller" filename="libgazebo_ros_camera.so">
+          <alwaysOn>true</alwaysOn>
+          <updateRate>0.0</updateRate>
+          <cameraName>robot/camera_fr</cameraName>
+          <imageTopicName>image_raw</imageTopicName>
+          <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+          <frameName>camera_fr_link</frameName>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <xacro:if value="${enable_front_ranges}">
+
+  <xacro:if value="${enable_top_camera}">
+    <link name='camera_top_link'>
+      <xacro:box_inertial name="camera_top_link" m="${camera_mass}" x="${camera_width}" y="${camera_length}" z="${camera_height}"/>
+      <collision name='camera_top_link_collision'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </collision>
+      <visual name='camera_top_link_visual'>
+        <geometry>
+          <box size="${camera_length} ${camera_width} ${camera_height}"/>
+        </geometry>
+      </visual>
+    </link>
+
+    <joint name="camera_top_joint" type="fixed">
+      <parent link="chassis"/>
+      <child link="camera_top_link"/>
+      <origin xyz="${chassis_length/2} 0 ${top_camera_z}" rpy="0 1.5708 -1.5708"/>
+    </joint>
+
+    <gazebo reference="camera_top_link">
+      <material>Gazebo/Purple</material>
+    </gazebo>
+
+    <gazebo reference="camera_top_link">
+      <sensor type="camera" name="camera_top_sensor">
+        <update_rate>30.0</update_rate>
+        <camera name="camera_top">
+          <horizontal_fov>${top_camera_fov}</horizontal_fov>
+          <image>
+            <width>1600</width>
+            <height>1600</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.02</near>
+            <far>5.0</far>
+          </clip>
+        </camera>
+        <plugin name="camera_top_controller" filename="libgazebo_ros_camera.so">
+          <alwaysOn>true</alwaysOn>
+          <updateRate>0.0</updateRate>
+          <cameraName>robot/camera_top</cameraName>
+          <imageTopicName>image_raw</imageTopicName>
+          <cameraInfoTopicName>camera_info</cameraInfoTopicName>
+          <frameName>camera_top_link</frameName>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+
+  <!-- LEFT FRONT RANGE SENSOR -->
+  <link name="range_front_left_link">
+    <xacro:box_inertial name="range_front_left_link"
+                        m="${front_range_mass}"
+                        x="${front_range_size}"
+                        y="${front_range_size}"
+                        z="${front_range_size}"/>
+    <collision name="range_front_left_collision">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </collision>
+    <visual name="range_front_left_visual">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="range_front_left_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="range_front_left_link"/>
+    <origin xyz="${front_range_x} ${front_range_left_y} ${front_range_z}"
+            rpy="0 0 ${front_range_left_yaw}"/>
+  </joint>
+
+  <gazebo reference="range_front_left_link">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+  <gazebo reference="range_front_left_link">
+    <sensor type="ray" name="range_front_left_sensor">
+      <update_rate>20.0</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0.0</min_angle>
+            <max_angle>0.0</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>${front_range_min}</min>
+          <max>${front_range_max}</max>
+          <resolution>${front_range_resolution}</resolution>
+        </range>
+      </ray>
+      <plugin name="range_front_left_plugin" filename="libgazebo_ros_range.so">
+        <robotNamespace>/B1</robotNamespace>
+        <topicName>range_front_left</topicName>
+        <frameName>range_front_left_link</frameName>
+        <radiation>infrared</radiation>
+        <fov>0.05</fov>
+        <gaussianNoise>0.0</gaussianNoise>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+
+  <!-- CENTER FRONT RANGE SENSOR -->
+  <link name="range_front_center_link">
+    <xacro:box_inertial name="range_front_center_link"
+                        m="${front_range_mass}"
+                        x="${front_range_size}"
+                        y="${front_range_size}"
+                        z="${front_range_size}"/>
+    <collision name="range_front_center_collision">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </collision>
+    <visual name="range_front_center_visual">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="range_front_center_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="range_front_center_link"/>
+    <origin xyz="${front_range_x} ${front_range_center_y} ${front_range_z}"
+            rpy="0 0 ${front_range_center_yaw}"/>
+  </joint>
+
+  <gazebo reference="range_front_center_link">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+  <gazebo reference="range_front_center_link">
+    <sensor type="ray" name="range_front_center_sensor">
+      <update_rate>20.0</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0.0</min_angle>
+            <max_angle>0.0</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>${front_range_min}</min>
+          <max>${front_range_max}</max>
+          <resolution>${front_range_resolution}</resolution>
+        </range>
+      </ray>
+      <plugin name="range_front_center_plugin" filename="libgazebo_ros_range.so">
+        <robotNamespace>/B1</robotNamespace>
+        <topicName>range_front_center</topicName>
+        <frameName>range_front_center_link</frameName>
+        <radiation>infrared</radiation>
+        <fov>0.05</fov>
+        <gaussianNoise>0.0</gaussianNoise>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+
+  <!-- RIGHT FRONT RANGE SENSOR -->
+  <link name="range_front_right_link">
+    <xacro:box_inertial name="range_front_right_link"
+                        m="${front_range_mass}"
+                        x="${front_range_size}"
+                        y="${front_range_size}"
+                        z="${front_range_size}"/>
+    <collision name="range_front_right_collision">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </collision>
+    <visual name="range_front_right_visual">
+      <geometry>
+        <box size="${front_range_size} ${front_range_size} ${front_range_size}"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="range_front_right_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="range_front_right_link"/>
+    <origin xyz="${front_range_x} ${front_range_right_y} ${front_range_z}"
+            rpy="0 0 ${front_range_right_yaw}"/>
+  </joint>
+
+  <gazebo reference="range_front_right_link">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+  <gazebo reference="range_front_right_link">
+    <sensor type="ray" name="range_front_right_sensor">
+      <update_rate>20.0</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0.0</min_angle>
+            <max_angle>0.0</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>${front_range_min}</min>
+          <max>${front_range_max}</max>
+          <resolution>${front_range_resolution}</resolution>
+        </range>
+      </ray>
+      <plugin name="range_front_right_plugin" filename="libgazebo_ros_range.so">
+        <robotNamespace>/B1</robotNamespace>
+        <topicName>range_front_right</topicName>
+        <frameName>range_front_right_link</frameName>
+        <radiation>infrared</radiation>
+        <fov>0.05</fov>
+        <gaussianNoise>0.0</gaussianNoise>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</xacro:if>
+
+
+</robot>
