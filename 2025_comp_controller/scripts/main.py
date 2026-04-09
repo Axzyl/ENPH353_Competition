@@ -7,12 +7,13 @@ from gazebo_msgs.msg import ModelState
 import adjustment
 import range_sensors as rs
 import sign_reader
-import sign_ui
 from sensor_msgs.msg import Image as RosImage
 from cv_bridge import CvBridge
 from std_msgs.msg import String
 import cv2
 import numpy as np
+import threading
+import time
  
 TOPIC        = "/B1/cmd_vel"
 CLUE_TOPIC   = "/score_tracker"
@@ -339,7 +340,7 @@ def read_sign(camera="center", timeout=5.0):
     rospy.loginfo("read_sign [%s]: top='%s'  bot='%s'", camera, top_text, bot_text)
  
     # Push to sign UI
-    sign_ui.push(frame_holder[0], sign_roi, top_crop, bot_crop, top_text, bot_text)
+    # sign_ui.push(frame_holder[0], sign_roi, top_crop, bot_crop, top_text, bot_text)
  
     clue_id += 1
     clue_pub.publish(f"Team 3,67,{clue_id},{bot_text}")
@@ -468,16 +469,222 @@ def wait_for_pedestrian_clear(timeout=30.0):
     rospy.logwarn("wait_for_pedestrian_clear: timed out waiting for pedestrian to clear.")
     return False
 
+ 
+# ------------------------------------------------------------------ #
+# Yoda detection                                                       #
+# ------------------------------------------------------------------ #
+ 
+# HSV range for Yoda's bright green skin (head/hands)
+# Tune with hsv_tuner.py if detection is unreliable
+YODA_HSV_LO = np.array([ 40, 100,  80])
+YODA_HSV_HI = np.array([ 80, 255, 220])
+ 
+# Default minimum blob area in pixels² for a valid detection.
+# Increase to require Yoda to be closer/larger before registering.
+YODA_MIN_AREA = 500
+ 
+ 
+def detect_yoda(frame=None, camera="center", min_area=YODA_MIN_AREA):
+    """
+    Detect Baby Yoda in a camera frame by looking for his distinctive
+    bright green skin colour (HSV-based).
+ 
+    Args:
+        frame    : BGR numpy array to analyse, or None to capture a
+                   fresh frame from `camera`
+        camera   : camera to use if frame is None ("left","center","right")
+        min_area : minimum green blob area in pixels² to count as a
+                   detection — increase for closer/larger requirement
+ 
+    Returns:
+        detected : True if Yoda is found
+        bbox     : (x, y, w, h) bounding box of the largest green blob,
+                   or None if not detected
+        area     : pixel area of the blob, or 0
+    """
+    if frame is None:
+        frame_holder = [None]
+        frame_count  = [0]
+ 
+        def _cb(msg):
+            frame_count[0] += 1
+            if frame_count[0] > 1:
+                frame_holder[0] = _bridge.imgmsg_to_cv2(
+                    msg, desired_encoding="bgr8")
+ 
+        sub      = rospy.Subscriber(CAMERA_TOPICS[camera], RosImage, _cb)
+        deadline = rospy.Time.now() + rospy.Duration(3.0)
+        rate     = rospy.Rate(30)
+        while frame_holder[0] is None and rospy.Time.now() < deadline:
+            rate.sleep()
+        sub.unregister()
+        frame = frame_holder[0]
+ 
+    if frame is None:
+        return False, None, 0
+ 
+    hsv  = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv,
+                       np.array(YODA_HSV_LO),
+                       np.array(YODA_HSV_HI))
+ 
+    # Clean up noise
+    k    = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+ 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False, None, 0
+ 
+    largest   = max(contours, key=cv2.contourArea)
+    area      = cv2.contourArea(largest)
+    bbox      = cv2.boundingRect(largest)
+ 
+    detected  = area >= min_area
+    rospy.loginfo("detect_yoda: area=%.0f  min=%.0f  detected=%s",
+                  area, min_area, detected)
+    return detected, bbox if detected else None, area
+ 
+ 
+def wait_for_yoda(camera="center", min_area=YODA_MIN_AREA,
+                  timeout=30.0):
+    """
+    Block until Yoda is detected in the camera feed, then stop.
+ 
+    Args:
+        camera   : camera to monitor
+        min_area : detection sensitivity (pixels²)
+        timeout  : max seconds to wait
+ 
+    Returns:
+        True if Yoda detected, False if timed out
+    """
+    rospy.loginfo("wait_for_yoda: watching %s  min_area=%d", camera, min_area)
+ 
+    frame_holder = [None]
+    frame_count  = [0]
+ 
+    def _cb(msg):
+        frame_count[0] += 1
+        if frame_count[0] > 4:
+            frame_holder[0] = _bridge.imgmsg_to_cv2(
+                msg, desired_encoding="bgr8")
+ 
+    sub      = rospy.Subscriber(CAMERA_TOPICS[camera], RosImage, _cb)
+    deadline = rospy.Time.now() + rospy.Duration(timeout)
+    rate     = rospy.Rate(10)
+ 
+    while rospy.Time.now() < deadline and not rospy.is_shutdown():
+        if frame_holder[0] is not None:
+            detected, bbox, area = detect_yoda(
+                frame=frame_holder[0], min_area=min_area)
+            frame_holder[0] = None
+            if detected and area < 100000:
+                sub.unregister()
+                rospy.loginfo("wait_for_yoda: detected! area=%.0f", area)
+                return True
+        rate.sleep()
+ 
+    sub.unregister()
+    rospy.logwarn("wait_for_yoda: timed out.")
+    return False
+
+# ------------------------------------------------------------------ #
+# Range sensor watchdog                                                #
+# ------------------------------------------------------------------ #
+SPAWN_POSES = {
+    1: (5.5,        2.5,       -1.57),
+    2: (0.4913,    -0.0903,     1.56),
+    3: (-3.904708,  0.598573,  -3.110783),
+    4: (-4.278303, -2.352247,   0.0),
+}
+
+WATCHDOG_INTERVAL   = 10.0   # seconds of no change before respawn
+WATCHDOG_TOLERANCE  = 0.01   # metres — change smaller than this = "same"
+ 
+_watchdog_thread    = None
+_watchdog_active    = False
+_watchdog_section   = 1
+watchdog_flag = False
+ 
+def _watchdog_loop():
+    """Background thread — monitors range sensors and respawns if stuck."""
+    global watchdog_flag
+    rate = rospy.Rate(2)   # check at 2 Hz
+    prev = rs.read_all()
+    last_change = time.time()
+ 
+    while _watchdog_active and not rospy.is_shutdown():
+        rate.sleep()
+        curr = rs.read_all()
+ 
+        # Check if any sensor value changed meaningfully
+        changed = False
+        for key in ("center", "left", "right"):
+            p = prev.get(key)
+            c = curr.get(key)
+            if p is None or c is None:
+                changed = True   # sensor just came online — not stuck
+                break
+            if abs(c - p) > WATCHDOG_TOLERANCE:
+                changed = True
+                break
+ 
+        if changed:
+            last_change = time.time()
+            prev = curr
+        else:
+            stuck_for = time.time() - last_change
+            if stuck_for >= WATCHDOG_INTERVAL:
+                rospy.logwarn(
+                    "Watchdog: range sensors unchanged for %.1fs — respawning!",
+                    stuck_for)
+                
+                pub.publish(Twist())
+                spawn_pose = SPAWN_POSES.get(_watchdog_section,
+                                             SPAWN_POSES.get(1))
+                if spawn_pose:
+                    spawn(*spawn_pose)
+                last_change = time.time()
+                prev = rs.read_all()
+                watchdog_flag = True
+ 
+ 
+def start_watchdog(section=1):
+    """
+    Start the range sensor watchdog in the background.
+    Call once at the start of each section.
+ 
+    Args:
+        section : current section number (used to look up spawn pose)
+    """
+    global _watchdog_thread, _watchdog_active, _watchdog_section
+    _watchdog_section = section
+    _watchdog_active  = True
+    _watchdog_thread  = threading.Thread(target=_watchdog_loop, daemon=True)
+    _watchdog_thread.start()
+    rospy.loginfo("Watchdog started (section=%d  interval=%.1fs)",
+                  section, WATCHDOG_INTERVAL)
+ 
+ 
+def stop_watchdog():
+    """Stop the watchdog — call before intentionally stopping the robot."""
+    global _watchdog_active
+    _watchdog_active = False
+    rospy.loginfo("Watchdog stopped.")
+ 
+# MAIN
 
 def main():
-    global pub, clue_pub, clue_id
+    global pub, clue_pub, clue_id, watchdog_flag
     rospy.init_node("temp_move", anonymous=True)
     pub = rospy.Publisher(TOPIC, Twist, queue_size=1)
     clue_pub = rospy.Publisher(CLUE_TOPIC, String, queue_size=1)
     clue_id = 0
     adjustment._ensure_camera()
     rs.init()
-    sign_ui.init()
     rospy.sleep(1.0)
     pub.publish(Twist())
     rs.read_all()
@@ -505,276 +712,280 @@ def main():
     rospy.sleep(1)
     
     clue_pub.publish("Team 3,67,0,idk")
+    
+    while section <= 4:
+        
+        if section == 1:
+            start_watchdog(section=1)
+            go_forward(1, speed_factor=2.0)
+            
+            adjustment.align_to_sign(pub, target_x_ratio=0.2, target_y_ratio=0.1)
+            
+            top, bot = read_sign("left")
+            print(f"{top}: {bot}")
+                    
+            go_forward(1)       
+            turn(0.7, clockwise=True)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=True)  
+            go_forward(0.62)
+            
+            go_forward(0.2)
+            
+            go_forward(0.5)       
+            turn(0.7, clockwise=False)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=False)  
+            go_forward(0.62, speed_factor=2.0)
+            
+            # go_forward(0.1)
+            
+            adjustment.align_to_line(pub, color="red", target_y_ratio=0.5, crop_top=0.2)
+            
+            wait_for_pedestrian_clear(timeout=8)
+            rospy.sleep(0.5)
+            
+            go_forward_until("center", "below", 2.225, speed=1.0)
+            go_forward_until("center", "above", 2.225, speed=-0.2)
+            go_forward_until("center", "below", 2.225, speed=0.2)
+            
+            turn(1, clockwise=False)
+            align_to_wall(sensor="center")
+            
+            go_forward_until("center", "below", 0.45, speed=1.0)
+            go_forward_until("center", "above", 0.45, speed=-0.2)
+            go_forward_until("center", "below", 0.45, speed=0.2)
+            
+            turn(1.45, clockwise=True)
+            
+            go_forward(1, speed_factor=2)
 
-    if section == 1:
-        
-        go_forward(1, speed_factor=2.0)
-        
-        adjustment.align_to_sign(pub, target_x_ratio=0.2, target_y_ratio=0.1)
-        
-        top, bot = read_sign("left")
-        print(f"{top}: {bot}")
-                
-        go_forward(1)       
-        turn(0.7, clockwise=True)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=True)  
-        go_forward(0.62)
-        
-        go_forward(0.2)
-        
-        go_forward(0.5)       
-        turn(0.7, clockwise=False)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=False)  
-        go_forward(0.62, speed_factor=2.0)
-        
-        # go_forward(0.1)
-        
-        adjustment.align_to_line(pub, color="red", target_y_ratio=0.5, crop_top=0.2)
-        
-        wait_for_pedestrian_clear(timeout=8)
-        rospy.sleep(0.5)
-        
-        go_forward_until("center", "below", 2.225, speed=1.0)
-        go_forward_until("center", "above", 2.225, speed=-0.2)
-        go_forward_until("center", "below", 2.225, speed=0.2)
-        
-        turn(1, clockwise=False)
-        align_to_wall(sensor="center")
-        
-        go_forward_until("center", "below", 0.45, speed=1.0)
-        go_forward_until("center", "above", 0.45, speed=-0.2)
-        go_forward_until("center", "below", 0.45, speed=0.2)
-        
-        turn(1.45, clockwise=True)
-        
-        go_forward(1, speed_factor=2)
+            # go_forward(1.8, speed_factor=2.0)
+            
+            # go_forward(0.5)       
+            # turn(0.7, clockwise=False)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=False)  
+            # go_forward(0.62)
+            
+            # go_forward(0.1)
+            
+            # go_forward(0.5)       
+            # turn(0.7, clockwise=True)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=True)  
+            # go_forward(0.62, speed_factor=2.0)
+            
+            # go_forward(0.3, speed_factor=2.0)
+            
+            adjustment.align_to_sign(pub, target_y_ratio=0.1)
+            top, bot = read_sign("right")
+            print(f"{top}: {bot}")
+                    
+            go_forward_until("center", "below", 0.38, speed=1.0)
+            go_forward_until("center", "above", 0.38, speed=-0.2)
+            go_forward_until("center", "below", 0.38, speed=0.2)
+            turn(1.4, clockwise=True)
+            go_forward(2.1)
+            turn(1.4, clockwise=False)
+            go_forward_until("center", "above", 1.24, speed=-0.5)
+            go_forward_until("center", "below", 1.24, speed=0.2)
+            go_forward_until("center", "above", 1.24, speed=-0.2)
+            turn(1.4, clockwise=True)
+            
+            # go_forward(0.5)       
+            # turn(0.7, clockwise=True)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=True)  
+            # go_forward(0.62)
+            # go_forward(0.6)       
+            # turn(0.7, clockwise=True)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=True)  
+            # go_forward(0.62)
+            # go_forward(0.6)       
+            # turn(0.7, clockwise=False)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=False)
 
-        # go_forward(1.8, speed_factor=2.0)
-        
-        # go_forward(0.5)       
-        # turn(0.7, clockwise=False)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=False)  
-        # go_forward(0.62)
-        
-        # go_forward(0.1)
-        
-        # go_forward(0.5)       
-        # turn(0.7, clockwise=True)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=True)  
-        # go_forward(0.62, speed_factor=2.0)
-        
-        # go_forward(0.3, speed_factor=2.0)
-        
-        adjustment.align_to_sign(pub, target_y_ratio=0.1)
-        top, bot = read_sign("right")
-        print(f"{top}: {bot}")
-                
-        go_forward_until("center", "below", 0.38, speed=1.0)
-        go_forward_until("center", "above", 0.38, speed=-0.2)
-        go_forward_until("center", "below", 0.38, speed=0.2)
-        turn(1.4, clockwise=True)
-        go_forward(2.1)
-        turn(1.4, clockwise=False)
-        go_forward_until("center", "above", 1.24, speed=-0.5)
-        go_forward_until("center", "below", 1.24, speed=0.2)
-        go_forward_until("center", "above", 1.24, speed=-0.2)
-        turn(1.4, clockwise=True)
-        
-        # go_forward(0.5)       
-        # turn(0.7, clockwise=True)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=True)  
-        # go_forward(0.62)
-        # go_forward(0.6)       
-        # turn(0.7, clockwise=True)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=True)  
-        # go_forward(0.62)
-        # go_forward(0.6)       
-        # turn(0.7, clockwise=False)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=False)
+            adjustment.align_to_sign(pub, target_y_ratio=0.1)
+            top, bot = read_sign("left")
+            print(f"{top}: {bot}")
+            
+            go_forward(0.62)
+            
+            rs.wait_until("center", "below", 0.5, timeout=20)
+            rospy.sleep(1)
+            
+            go_forward(1.2)
+            turn(1.4, clockwise=False)
+            go_forward(0.9) 
+            
+            go_forward(0.5)       
+            turn(0.7, clockwise=True)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=True)  
+            go_forward(0.62)
+            
+            go_forward(3)
+            turn(1.4, clockwise=False)
+            go_forward_until("center", "above", 1.24, speed=-0.5)
+            go_forward_until("center", "below", 1.24, speed=0.2)
+            go_forward_until("center", "above", 1.24, speed=-0.2)
+            turn(1, clockwise=True)
+            align_to_wall(sensor="center", right=True)
+            
+            # go_forward(0.5)       
+            # turn(0.7, clockwise=True)             
+            # go_forward(0.52)       
+            # turn(0.7, clockwise=True)  
+            # go_forward(0.62)  
+            # go_forward(0.9)
+            # turn(1.35, clockwise=False)
+            
+            
+            go_forward(1, speed_factor=2.0)  
+            
+            go_forward_until("center", "below", 0.525)     
+            go_forward_until("center", "above", 0.525, speed=-0.2)   
+            go_forward_until("center", "below", 0.525, speed=0.2)    
+            turn(1.4, clockwise=True)             
+            
+            go_forward(0.8, speed_factor=2.0)
+            
+            adjustment.align_to_sign(pub, target_y_ratio=0.1)
+            top, bot = read_sign("right")
+            print(f"{top}: {bot}")
+            
+            go_forward(1.67)
+            adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.5, crop_top=0.0)
+            stop_watchdog()
+            
+        if(section == 2):
+            start_watchdog(section=2)
 
-        adjustment.align_to_sign(pub, target_y_ratio=0.1)
-        top, bot = read_sign("left")
-        print(f"{top}: {bot}")
+            go_forward(0.2)
+            go_forward(0.5)       
+            turn(0.7, clockwise=True)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=True)  
+            go_forward(0.62)
+            go_forward(2.2, speed_factor=2.0)
+            go_forward(0.5)       
+            turn(0.7, clockwise=False)             
+            go_forward(0.52)       
+            turn(0.75, clockwise=False)  
+            go_forward(0.57)
+            go_forward(2.0, speed_factor=2.0)
+            go_forward(0.5)       
+            turn(0.7, clockwise=False)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=False)  
+            go_forward(0.57)
+            
+            # go_forward(2.1, speed_factor=2.0)
+            follow_wall(target_dist=0.4, stop_dist_min=0.6, stop_dist_max=0.9,turn_gain=12)
+            
+            go_forward(0.6)       
+            turn(0.7, clockwise=False)             
+            go_forward(0.52)       
+            turn(0.65, clockwise=False)  
+            go_forward(0.62, speed_factor=2.0)
+            
+            adjustment.align_to_sign(pub, target_y_ratio=0.1)
+            top, bot = read_sign("left")
+            print(f"{top}: {bot}")
+            
+            go_forward(0.1)
+            go_forward(0.5) 
+            turn(0.7, clockwise=True)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=True)
+            go_forward(0.72)
+                    
+            # Bridge
+            adjustment.align_water_horizontal(pub)
+            adjustment.align_between_water(pub, target_y_ratio=0.4)
+            
+            turn(0.3, clockwise=True)  
+            go_forward(0.8)
+            turn(0.3, clockwise=True)  
+            go_forward(1.2)
+            turn(0.95, clockwise=False) 
+            go_forward(3.2)
+            turn(0.4, clockwise=True)
+            go_forward(1.2)
+            adjustment.align_to_sign(pub, target_y_ratio=0.1, crop_bottom=0.3)
+            top, bot = read_sign("right")
+            print(f"{top}: {bot}")
+            
+            go_forward(0.2) 
+            go_forward(0.5)       
+            turn(0.7, clockwise=False)             
+            go_forward(0.52)       
+            turn(0.7, clockwise=False)  
+            go_forward(0.62)
+            
+            # adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.45, target_vertical=True)
+            go_forward_until("center", "below", 0.3)
+            turn(1.4, clockwise=True)  
+            go_forward(0.5)
+            adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.5, crop_top=0.0)
+            stop_watchdog()
+
+        if section == 3:
+            
+            turn(0.5, clockwise=False)
+            # rs.wait_until("center", "below", 1.5, timeout=30)
+            wait_for_yoda(camera="center", min_area=2500)
+
+            rospy.sleep(5)
+            
+            # turn(0.1, clockwise=False)
+                    
+            go_forward(3)
+            turn(0.8, clockwise=False)
+            go_forward(1.5)
+            turn(1.1, clockwise=False)
+            go_forward(2.5)
+            turn(1, clockwise=True)
+            go_forward_until("center", "below", 0.375)
+            turn(1.4, clockwise=False)
+            
+            adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.3, crop_top=0.0)
+            top, bot = read_sign("left")
+            print(f"{top}: {bot}")
+                        
+        if section == 4:
+            
+            go_forward(4, speed_factor=2.0)
+            go_forward_until("left", "above", 0.7, speed=1.0)
+            go_forward(0.5)
+            turn(1.4, clockwise=False)
+            go_forward(2, speed_factor=2.0)
+            go_forward_until("left", "above", 0.5, speed=1.0)
+            go_forward(0.7)
+            turn(1.45, clockwise=False)
+            go_forward(2, speed_factor=2.0)
+            go_forward_until("left", "above", 0.5, speed=0.75, timeout=1)
+            go_forward(0.7)
+            turn(1.4, clockwise=False)
+            go_forward(1, speed_factor=2.0)
+            go_forward_until("left", "above", 1)
+            go_forward(0.9)
+            turn(1, clockwise=False)
+            align_to_wall(sensor="center")
+            go_forward_until("center", "below", 0.5, speed=0.75, timeout=1.4)
+            # go_forward(1.8, speed_factor=2)
+    
+            pub.publish(Twist())
+            
+            top, bot = read_sign("center")
+            print(f"{top}: {bot}")
+            rospy.sleep(2)
         
-        go_forward(0.62)
-        
-        rs.wait_until("center", "below", 0.5, timeout=20)
-        rospy.sleep(1)
-        
-        go_forward(1.2)
-        turn(1.4, clockwise=False)
-        go_forward(0.9) 
-        
-        go_forward(0.5)       
-        turn(0.7, clockwise=True)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=True)  
-        go_forward(0.62)
-        
-        go_forward(3)
-        turn(1.4, clockwise=False)
-        go_forward_until("center", "above", 1.24, speed=-0.5)
-        go_forward_until("center", "below", 1.24, speed=0.2)
-        go_forward_until("center", "above", 1.24, speed=-0.2)
-        turn(1, clockwise=True)
-        align_to_wall(sensor="center", right=True)
-        
-        # go_forward(0.5)       
-        # turn(0.7, clockwise=True)             
-        # go_forward(0.52)       
-        # turn(0.7, clockwise=True)  
-        # go_forward(0.62)  
-        # go_forward(0.9)
-        # turn(1.35, clockwise=False)
-        
-        
-        go_forward(1, speed_factor=2.0)  
-        
-        go_forward_until("center", "below", 0.525)     
-        go_forward_until("center", "above", 0.525, speed=-0.2)   
-        go_forward_until("center", "below", 0.525, speed=0.2)    
-        turn(1.4, clockwise=True)             
-        
-        go_forward(0.8, speed_factor=2.0)
-        
-        adjustment.align_to_sign(pub, target_y_ratio=0.1)
-        top, bot = read_sign("right")
-        print(f"{top}: {bot}")
-        
-        go_forward(1.67)
-        adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.5, crop_top=0.0)
-        
+        if 
         section += 1
-        
-    if(section == 2):
-        
-        go_forward(0.2)
-        go_forward(0.5)       
-        turn(0.7, clockwise=True)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=True)  
-        go_forward(0.62)
-        go_forward(2.2, speed_factor=2.0)
-        go_forward(0.5)       
-        turn(0.7, clockwise=False)             
-        go_forward(0.52)       
-        turn(0.75, clockwise=False)  
-        go_forward(0.57)
-        go_forward(2.0, speed_factor=2.0)
-        go_forward(0.5)       
-        turn(0.7, clockwise=False)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=False)  
-        go_forward(0.57)
-        
-        # go_forward(2.1, speed_factor=2.0)
-        follow_wall(target_dist=0.4, stop_dist_min=0.6, stop_dist_max=0.9,turn_gain=12)
-        
-        go_forward(0.6)       
-        turn(0.7, clockwise=False)             
-        go_forward(0.52)       
-        turn(0.65, clockwise=False)  
-        go_forward(0.62, speed_factor=2.0)
-        
-        adjustment.align_to_sign(pub, target_y_ratio=0.1)
-        top, bot = read_sign("left")
-        print(f"{top}: {bot}")
-        
-        go_forward(0.1)
-        go_forward(0.5) 
-        turn(0.7, clockwise=True)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=True)
-        go_forward(0.72)
-                
-        # Bridge
-        adjustment.align_water_horizontal(pub)
-        adjustment.align_between_water(pub, target_y_ratio=0.4)
-        
-        turn(0.3, clockwise=True)  
-        go_forward(0.8)
-        turn(0.3, clockwise=True)  
-        go_forward(1.2)
-        turn(0.95, clockwise=False) 
-        go_forward(3.2)
-        turn(0.4, clockwise=True)
-        go_forward(1.2)
-        adjustment.align_to_sign(pub, target_y_ratio=0.1, crop_bottom=0.3)
-        top, bot = read_sign("right")
-        print(f"{top}: {bot}")
-        
-        go_forward(0.2) 
-        go_forward(0.5)       
-        turn(0.7, clockwise=False)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=False)  
-        go_forward(0.62)
-        
-        # adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.45, target_vertical=True)
-        go_forward_until("center", "below", 0.3)
-        turn(1.4, clockwise=True)  
-        go_forward(0.5)
-        adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.5, crop_top=0.0)
-        
-        section += 1
-
-    if section == 3:
-        
-        turn(0.5, clockwise=False)
-        rs.wait_until("center", "below", 1.5, timeout=30)
-        rospy.sleep(5)
-        
-        # turn(0.1, clockwise=False)
-                
-        go_forward(3)
-        turn(0.8, clockwise=False)
-        go_forward(1.5)
-        turn(1.1, clockwise=False)
-        go_forward(2.5)
-        turn(1, clockwise=True)
-        go_forward_until("center", "below", 0.375)
-        turn(1.4, clockwise=False)
-        
-        adjustment.align_to_line(pub, color="magenta", target_y_ratio=0.3, crop_top=0.0)
-        top, bot = read_sign("left")
-        print(f"{top}: {bot}")
-        
-        section += 1
-        
-    if section == 4:
-        
-        go_forward(4, speed_factor=2.0)
-        go_forward_until("left", "above", 0.7, speed=1.0)
-        go_forward(0.5)
-        turn(1.4, clockwise=False)
-        go_forward(2, speed_factor=2.0)
-        go_forward_until("left", "above", 0.5, speed=1.0)
-        go_forward(0.7)
-        turn(1.45, clockwise=False)
-        go_forward(2, speed_factor=2.0)
-        go_forward_until("left", "above", 0.5, speed=0.75, timeout=1)
-        go_forward(0.7)
-        turn(1.4, clockwise=False)
-        go_forward(1, speed_factor=2.0)
-        go_forward_until("left", "above", 1)
-        go_forward(0.9)
-        turn(1, clockwise=False)
-        align_to_wall(sensor="center")
-        go_forward_until("center", "below", 0.5, speed=0.75, timeout=1.8)
-        # go_forward(1.8, speed_factor=2)
-   
-        pub.publish(Twist())
-        
-        top, bot = read_sign("center")
-        print(f"{top}: {bot}")
-        rospy.sleep(2)
         
     clue_pub.publish("Team 3,67,-1,idk")
      
