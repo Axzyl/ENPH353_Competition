@@ -496,6 +496,9 @@ def main():
     if starting_section == 4:
         clue_id = 7
         spawn(-4.278303, -2.352247, 0)
+    if starting_section == 5:
+        align_to_wall(sensor="center")
+        return
     
     section = starting_section
 
@@ -615,16 +618,23 @@ def main():
         turn(0.7, clockwise=True)  
         go_forward(0.62)
         
-        go_forward(2.2)
+        go_forward(3)
+        turn(1.4, clockwise=False)
+        go_forward_until("center", "above", 1.24, speed=-0.5)
+        go_forward_until("center", "below", 1.24, speed=0.2)
+        go_forward_until("center", "above", 1.24, speed=-0.2)
+        turn(1, clockwise=True)
+        align_to_wall(sensor="center", right=True)
         
-        go_forward(0.5)       
-        turn(0.7, clockwise=True)             
-        go_forward(0.52)       
-        turn(0.7, clockwise=True)  
-        go_forward(0.62)  
+        # go_forward(0.5)       
+        # turn(0.7, clockwise=True)             
+        # go_forward(0.52)       
+        # turn(0.7, clockwise=True)  
+        # go_forward(0.62)  
+        # go_forward(0.9)
+        # turn(1.35, clockwise=False)
         
-        go_forward(0.9)
-        turn(1.35, clockwise=False)
+        
         go_forward(1, speed_factor=2.0)  
         
         go_forward_until("center", "below", 0.525)     
@@ -717,11 +727,11 @@ def main():
 
     if section == 3:
         
-        turn(0.4, clockwise=False)
+        turn(0.5, clockwise=False)
         rs.wait_until("center", "below", 1.5, timeout=30)
         rospy.sleep(5)
         
-        turn(0.1, clockwise=False)
+        # turn(0.1, clockwise=False)
                 
         go_forward(3)
         turn(0.8, clockwise=False)
@@ -741,7 +751,7 @@ def main():
     if section == 4:
         
         go_forward(4, speed_factor=2.0)
-        go_forward_until("left", "above", 0.8, speed=1.0)
+        go_forward_until("left", "above", 0.7, speed=1.0)
         go_forward(0.5)
         turn(1.4, clockwise=False)
         go_forward(2, speed_factor=2.0)
@@ -749,15 +759,15 @@ def main():
         go_forward(0.7)
         turn(1.45, clockwise=False)
         go_forward(2, speed_factor=2.0)
-        go_forward_until("left", "above", 5, speed=0.75, timeout=1)
-        go_forward(0.75)
+        go_forward_until("left", "above", 0.5, speed=0.75, timeout=1)
+        go_forward(0.7)
         turn(1.4, clockwise=False)
         go_forward(1, speed_factor=2.0)
         go_forward_until("left", "above", 1)
-        go_forward(1)
+        go_forward(0.9)
         turn(1, clockwise=False)
         align_to_wall(sensor="center")
-        go_forward_until("center", "below", 0.5, speed=0.75)
+        go_forward_until("center", "below", 0.5, speed=0.75, timeout=1.8)
         # go_forward(1.8, speed_factor=2)
    
         pub.publish(Twist())
