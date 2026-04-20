@@ -20,7 +20,8 @@ Public API:
 
 import cv2
 import numpy as np
-import pytesseract
+# import pytesseract
+from ZhaoOCR import ZhaoOCR
 
 # ------------------------------------------------------------------ #
 # Tuning constants                                                     #
@@ -197,63 +198,63 @@ def _crop_to_white_border(img, min_size=10):
     return img[top:bot, left:right + 1]
 
 
-# ================================================================== #
-# OCR                                                                 #
-# ================================================================== #
+# # ================================================================== #
+# # OCR                                                                 #
+# # ================================================================== #
 
-def _preprocess_for_ocr(roi):
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-    gray = cv2.resize(gray, (w * OCR_SCALE, h * OCR_SCALE),
-                      interpolation=cv2.INTER_CUBIC)
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    _, binary = cv2.threshold(gray, 0, 255,
-                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if np.mean(binary) < 128:
-        binary = cv2.bitwise_not(binary)
-    return binary
-
-
-def _run_ocr(binary_img):
-    try:
-        raw     = pytesseract.image_to_string(binary_img, config=TESS_CONFIG)
-        cleaned = " ".join(
-            "".join(c for c in raw if c.isalpha() or c.isdigit() or c == " ").split()
-        )
-        return cleaned
-    except Exception as e:
-        return f"[OCR error: {e}]"
+# def _preprocess_for_ocr(roi):
+#     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+#     h, w = gray.shape
+#     gray = cv2.resize(gray, (w * OCR_SCALE, h * OCR_SCALE),
+#                       interpolation=cv2.INTER_CUBIC)
+#     gray = cv2.GaussianBlur(gray, (3, 3), 0)
+#     _, binary = cv2.threshold(gray, 0, 255,
+#                               cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#     if np.mean(binary) < 128:
+#         binary = cv2.bitwise_not(binary)
+#     return binary
 
 
-def _read_sign(sign_roi):
-    """
-    Split sign ROI into halves, crop each to its white border,
-    OCR each half. Returns (top_crop, bot_crop, top_text, bot_text).
-    """
-    h, w = sign_roi.shape[:2]
-    mid  = h // 2
+# def _run_ocr(binary_img):
+#     try:
+#         raw     = pytesseract.image_to_string(binary_img, config=TESS_CONFIG)
+#         cleaned = " ".join(
+#             "".join(c for c in raw if c.isalpha() or c.isdigit() or c == " ").split()
+#         )
+#         return cleaned
+#     except Exception as e:
+#         return f"[OCR error: {e}]"
 
-    top_half = sign_roi[:mid, :]
-    bot_half = sign_roi[mid:, :]
 
-    # Crop each half tightly to its blue border
-    top_crop = _crop_to_white_border(top_half)
-    bot_crop = _crop_to_white_border(bot_half)
+# def _read_sign(sign_roi):
+#     """
+#     Split sign ROI into halves, crop each to its white border,
+#     OCR each half. Returns (top_crop, bot_crop, top_text, bot_text).
+#     """
+#     h, w = sign_roi.shape[:2]
+#     mid  = h // 2
 
-    # Debug: save images to /tmp to verify cropping
-    cv2.imwrite("/tmp/sign_top_half_raw.png", top_half)
-    cv2.imwrite("/tmp/sign_bot_half_raw.png", bot_half)
-    cv2.imwrite("/tmp/sign_top_crop.png", top_crop)
-    cv2.imwrite("/tmp/sign_bot_crop.png", bot_crop)
+#     top_half = sign_roi[:mid, :]
+#     bot_half = sign_roi[mid:, :]
 
-    top_bin  = _preprocess_for_ocr(top_crop)
-    bot_bin  = _preprocess_for_ocr(bot_crop)
+#     # Crop each half tightly to its blue border
+#     top_crop = _crop_to_white_border(top_half)
+#     bot_crop = _crop_to_white_border(bot_half)
 
-    # top_text = _run_ocr(top_bin)
-    top_text = "temp"
-    bot_text = _run_ocr(bot_bin)
+#     # Debug: save images to /tmp to verify cropping
+#     cv2.imwrite("/tmp/sign_top_half_raw.png", top_half)
+#     cv2.imwrite("/tmp/sign_bot_half_raw.png", bot_half)
+#     cv2.imwrite("/tmp/sign_top_crop.png", top_crop)
+#     cv2.imwrite("/tmp/sign_bot_crop.png", bot_crop)
 
-    return top_crop, bot_crop, top_text, bot_text
+#     top_bin  = _preprocess_for_ocr(top_crop)
+#     bot_bin  = _preprocess_for_ocr(bot_crop)
+
+#     # top_text = _run_ocr(top_bin)
+#     top_text = "temp"
+#     bot_text = _run_ocr(bot_bin)
+
+#     return top_crop, bot_crop, top_text, bot_text
 
 
 # ================================================================== #
@@ -288,29 +289,31 @@ def process_frame(frame):
         _last_bot_text = ""
         if _result_callback:
             _result_callback(None, None, None, "", "")
-        return annotated, None, None, None, "", ""
-
-    x, y, w, h = rect
-
-    cv2.rectangle(annotated, (x, y), (x + w, y + h), ANNO_COLOR, 2)
-    cv2.putText(annotated, "SIGN", (x, y - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, ANNO_COLOR, 2)
+        return "", ""
 
     sign_roi = _extract_interior(frame, rect)
-    top_crop, bot_crop, top_text, bot_text = _read_sign(sign_roi)
 
-    cv2.putText(annotated, top_text, (x, y + h + 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, ANNO_COLOR, 1)
-    cv2.putText(annotated, bot_text, (x, y + h + 36),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, ANNO_COLOR, 1)
 
-    _last_sign_roi = sign_roi
-    _last_top_crop = top_crop
-    _last_bot_crop = bot_crop
-    _last_top_text = top_text
-    _last_bot_text = bot_text
+    imageProcess = ZhaoOCR()
 
-    if _result_callback:
-        _result_callback(sign_roi, top_crop, bot_crop, top_text, bot_text)
+    filtered = ZhaoOCR.filter_img(sign_roi)
 
-    return annotated, sign_roi, top_crop, bot_crop, top_text, bot_text
+    
+    # homography = imageProcess.get_homography(filtered)
+    # homography_with_box = imageProcess.draw_Boxes(homography)
+    # cv2.imshow("homography",homography)
+    # cv2.imshow("charcter boxes",homography_with_box)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+    
+    sign_text = imageProcess.get_text(filtered)
+
+
+    if sign_text is None:
+        return "", ""
+    
+    top_text = sign_text[0]
+    bot_text = sign_text[1]
+
+
+    return top_text, bot_text

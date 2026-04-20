@@ -327,6 +327,14 @@
             <near>0.02</near>
             <far>300</far>
           </clip>
+          <noise>
+            <type>gaussian</type>
+            <!-- Noise is sampled independently per pixel on each frame.
+                That pixel's noise value is added to each of its color
+                channels, which at that point lie in the range [0,1]. -->
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
         </camera>
         <plugin name="camera_fl_controller" filename="libgazebo_ros_camera.so">
           <alwaysOn>true</alwaysOn>
@@ -380,6 +388,14 @@
             <near>0.02</near>
             <far>300</far>
           </clip>
+          <noise>
+            <type>gaussian</type>
+            <!-- Noise is sampled independently per pixel on each frame.
+                That pixel's noise value is added to each of its color
+                channels, which at that point lie in the range [0,1]. -->
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
         </camera>
         <plugin name="camera_fr_controller" filename="libgazebo_ros_camera.so">
           <alwaysOn>true</alwaysOn>
@@ -434,6 +450,14 @@
             <near>0.02</near>
             <far>5.0</far>
           </clip>
+          <noise>
+            <type>gaussian</type>
+            <!-- Noise is sampled independently per pixel on each frame.
+                That pixel's noise value is added to each of its color
+                channels, which at that point lie in the range [0,1]. -->
+            <mean>0.0</mean>
+            <stddev>0.007</stddev>
+          </noise>
         </camera>
         <plugin name="camera_top_controller" filename="libgazebo_ros_camera.so">
           <alwaysOn>true</alwaysOn>

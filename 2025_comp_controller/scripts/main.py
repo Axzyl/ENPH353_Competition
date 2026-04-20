@@ -7,7 +7,6 @@ from gazebo_msgs.msg import ModelState
 import adjustment
 import range_sensors as rs
 import sign_reader
-import sign_ui
 from sensor_msgs.msg import Image as RosImage
 from cv_bridge import CvBridge
 from std_msgs.msg import String
@@ -335,11 +334,11 @@ def read_sign(camera="center", timeout=5.0):
         rospy.logwarn("read_sign: no frame received from %s within %.1fs", camera, timeout)
         return "", ""
  
-    _, sign_roi, top_crop, bot_crop, top_text, bot_text = sign_reader.process_frame(frame_holder[0])
+    top_text, bot_text = sign_reader.process_frame(frame_holder[0])
     rospy.loginfo("read_sign [%s]: top='%s'  bot='%s'", camera, top_text, bot_text)
  
     # Push to sign UI
-    sign_ui.push(frame_holder[0], sign_roi, top_crop, bot_crop, top_text, bot_text)
+    # sign_ui.push(frame_holder[0], sign_roi, top_crop, bot_crop, top_text, bot_text)
  
     clue_id += 1
     clue_pub.publish(f"Team 3,67,{clue_id},{bot_text}")
@@ -468,6 +467,127 @@ def wait_for_pedestrian_clear(timeout=30.0):
     rospy.logwarn("wait_for_pedestrian_clear: timed out waiting for pedestrian to clear.")
     return False
 
+ 
+# ------------------------------------------------------------------ #
+# Yoda detection                                                       #
+# ------------------------------------------------------------------ #
+ 
+# HSV range for Yoda's bright green skin (head/hands)
+# Tune with hsv_tuner.py if detection is unreliable
+YODA_HSV_LO = np.array([ 40, 100,  80])
+YODA_HSV_HI = np.array([ 80, 255, 220])
+ 
+# Default minimum blob area in pixels² for a valid detection.
+# Increase to require Yoda to be closer/larger before registering.
+YODA_MIN_AREA = 500
+ 
+ 
+def detect_yoda(frame=None, camera="center", min_area=YODA_MIN_AREA):
+    """
+    Detect Baby Yoda in a camera frame by looking for his distinctive
+    bright green skin colour (HSV-based).
+ 
+    Args:
+        frame    : BGR numpy array to analyse, or None to capture a
+                   fresh frame from `camera`
+        camera   : camera to use if frame is None ("left","center","right")
+        min_area : minimum green blob area in pixels² to count as a
+                   detection — increase for closer/larger requirement
+ 
+    Returns:
+        detected : True if Yoda is found
+        bbox     : (x, y, w, h) bounding box of the largest green blob,
+                   or None if not detected
+        area     : pixel area of the blob, or 0
+    """
+    if frame is None:
+        frame_holder = [None]
+        frame_count  = [0]
+ 
+        def _cb(msg):
+            frame_count[0] += 1
+            if frame_count[0] > 1:
+                frame_holder[0] = _bridge.imgmsg_to_cv2(
+                    msg, desired_encoding="bgr8")
+ 
+        sub      = rospy.Subscriber(CAMERA_TOPICS[camera], RosImage, _cb)
+        deadline = rospy.Time.now() + rospy.Duration(3.0)
+        rate     = rospy.Rate(30)
+        while frame_holder[0] is None and rospy.Time.now() < deadline:
+            rate.sleep()
+        sub.unregister()
+        frame = frame_holder[0]
+ 
+    if frame is None:
+        return False, None, 0
+ 
+    hsv  = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv,
+                       np.array(YODA_HSV_LO),
+                       np.array(YODA_HSV_HI))
+ 
+    # Clean up noise
+    k    = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  k)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+ 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False, None, 0
+ 
+    largest   = max(contours, key=cv2.contourArea)
+    area      = cv2.contourArea(largest)
+    bbox      = cv2.boundingRect(largest)
+ 
+    detected  = area >= min_area
+    rospy.loginfo("detect_yoda: area=%.0f  min=%.0f  detected=%s",
+                  area, min_area, detected)
+    return detected, bbox if detected else None, area
+ 
+ 
+def wait_for_yoda(camera="center", min_area=YODA_MIN_AREA,
+                  timeout=30.0):
+    """
+    Block until Yoda is detected in the camera feed, then stop.
+ 
+    Args:
+        camera   : camera to monitor
+        min_area : detection sensitivity (pixels²)
+        timeout  : max seconds to wait
+ 
+    Returns:
+        True if Yoda detected, False if timed out
+    """
+    rospy.loginfo("wait_for_yoda: watching %s  min_area=%d", camera, min_area)
+ 
+    frame_holder = [None]
+    frame_count  = [0]
+ 
+    def _cb(msg):
+        frame_count[0] += 1
+        if frame_count[0] > 4:
+            frame_holder[0] = _bridge.imgmsg_to_cv2(
+                msg, desired_encoding="bgr8")
+ 
+    sub      = rospy.Subscriber(CAMERA_TOPICS[camera], RosImage, _cb)
+    deadline = rospy.Time.now() + rospy.Duration(timeout)
+    rate     = rospy.Rate(10)
+ 
+    while rospy.Time.now() < deadline and not rospy.is_shutdown():
+        if frame_holder[0] is not None:
+            detected, bbox, area = detect_yoda(
+                frame=frame_holder[0], min_area=min_area)
+            frame_holder[0] = None
+            if detected and area < 100000:
+                sub.unregister()
+                rospy.loginfo("wait_for_yoda: detected! area=%.0f", area)
+                return True
+        rate.sleep()
+ 
+    sub.unregister()
+    rospy.logwarn("wait_for_yoda: timed out.")
+    return False
 
 def main():
     global pub, clue_pub, clue_id
@@ -477,12 +597,13 @@ def main():
     clue_id = 0
     adjustment._ensure_camera()
     rs.init()
-    sign_ui.init()
     rospy.sleep(1.0)
     pub.publish(Twist())
     rs.read_all()
     
+    # CHANGE HERE IF SOMETHING GOES WRONG
     starting_section = 1
+    start_timer = True
     
     if starting_section == 1:
         spawn(5.5, 2.5, -1.57)
@@ -504,7 +625,8 @@ def main():
 
     rospy.sleep(1)
     
-    clue_pub.publish("Team 3,67,0,idk")
+    if start_timer:
+        clue_pub.publish("Team 3,67,0,idk")
 
     if section == 1:
         
@@ -534,7 +656,7 @@ def main():
         adjustment.align_to_line(pub, color="red", target_y_ratio=0.5, crop_top=0.2)
         
         wait_for_pedestrian_clear(timeout=8)
-        rospy.sleep(0.5)
+        rospy.sleep(1.5)
         
         go_forward_until("center", "below", 2.225, speed=1.0)
         go_forward_until("center", "above", 2.225, speed=-0.2)
@@ -606,7 +728,7 @@ def main():
         go_forward(0.62)
         
         rs.wait_until("center", "below", 0.5, timeout=20)
-        rospy.sleep(1)
+        rospy.sleep(2)
         
         go_forward(1.2)
         turn(1.4, clockwise=False)
@@ -728,7 +850,9 @@ def main():
     if section == 3:
         
         turn(0.5, clockwise=False)
-        rs.wait_until("center", "below", 1.5, timeout=30)
+        # rs.wait_until("center", "below", 1.5, timeout=30)
+        wait_for_yoda(camera="center", min_area=2200)
+
         rospy.sleep(5)
         
         # turn(0.1, clockwise=False)
@@ -764,10 +888,10 @@ def main():
         turn(1.4, clockwise=False)
         go_forward(1, speed_factor=2.0)
         go_forward_until("left", "above", 1)
-        go_forward(0.9)
+        go_forward(1)
         turn(1, clockwise=False)
         align_to_wall(sensor="center")
-        go_forward_until("center", "below", 0.5, speed=0.75, timeout=1.8)
+        go_forward_until("center", "below", 0.5, speed=0.75, timeout=1.4)
         # go_forward(1.8, speed_factor=2)
    
         pub.publish(Twist())

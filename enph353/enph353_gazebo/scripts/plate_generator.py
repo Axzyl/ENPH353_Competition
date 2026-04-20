@@ -19,7 +19,7 @@ from PIL import Image, ImageFont, ImageDraw
 # The local file must be in the same folder as this script and named
 # LOCAL_CSV_FILENAME. It must have the same header row as the URL CSV,
 # but can have multiple data rows — one is chosen at random.
-USE_LOCAL_CSV    = True
+USE_LOCAL_CSV    = False
 LOCAL_CSV_FILENAME = "clues.csv"
 
 # ------------------------------------------------------------------ #
